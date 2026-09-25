@@ -182,14 +182,18 @@ Diferente de abordagens recursivas ingênuas que geram estouro de pilha (*StackO
 O mod não altera o código original do AE2 ou do ExtendedAE em disco; ele utiliza Mixins no runtime:
 
 ### 6.1. Mixins do Applied Energistics 2
+- **`MixinCraftingCpuLogic`** (Alvo: `appeng.crafting.execution.CraftingCpuLogic`):
+  - `@Inject(method = "trySubmitJob", at = @At("RETURN"))`:
+    - Intercepta a submissão e início de trabalhos de autocrafting confirmados pelo jogador.
+    - Captura todos os padrões da árvore executada (`plan.patternTimes().keySet()`) e os registra permanentemente no `WildcardProviderManager` e no NBT do `WildcardPatternItem`.
 - **`MixinPatternProviderLogic`** (Alvo: `appeng.helpers.patternprovider.PatternProviderLogic`):
   - Implementa a interface `IWildcardPatternHolder`.
   - `@Inject(method = "updatePatterns", at = @At("RETURN"))`:
     - Percorre o inventário do Pattern Provider.
-    - Se encontrar `WildcardPatternItem`, marca `hasWildcard = true` e registra no `WildcardProviderManager`.
+    - Se encontrar `WildcardPatternItem`, marca `hasWildcard = true`, recupera as receitas salvas no NBT do item e registra o provedor no `WildcardProviderManager`.
     - Se o item for removido, desregistra o provedor e limpa os padrões dinâmicos da lista interna.
   - `@Inject(method = "onMainNodeStateChanged", at = @At("RETURN"))`: Garante re-registro quando o bloco é conectado à grade ME.
-  - `@Inject(method = "pushPattern", at = @At("HEAD"))`: Garante que, caso o pattern fornecido dinamicamente seja despachado para crafting, ele seja reconhecido na lista interna para permitir o envio de itens ao inventário da Molecular Assembler.
+  - `@Inject(method = "pushPattern", at = @At("HEAD"))`: Garante que, caso o pattern fornecido dinamicamente seja despachado para crafting, ele seja reconhecido na lista interna e gravado como receita permanente caso ainda não seja.
 
 ### 6.2. Mixins do ExtendedAE (Opcional / Multiblock Assembler Matrix)
 - **`AE2UniversalPatternMixinPlugin`**:
@@ -204,7 +208,41 @@ O mod não altera o código original do AE2 ou do ExtendedAE em disco; ele utili
 
 ---
 
-## 7. Estrutura de Arquivos no Repositório
+## 7. Integração com JEI (Just Enough Items) — Click-to-Index (Zero Lag)
+
+Para permitir a integração perfeita com o JEI sem causar nenhum lag durante a digitação na barra de busca do JEI:
+1. **`AE2UniversalPatternJeiPlugin`**:
+   - Implementa `mezz.jei.api.IModPlugin` anotado com `@JeiPlugin`.
+   - Armazena a instância ativa do `IJeiRuntime`.
+2. **`ClientTerminalTracker` + `JEIInteractionHelper`**:
+   - Ouve o evento de cliente `ScreenEvent.MouseButtonPressed.Pre`.
+   - **Condição de ativação obrigatória:** O jogador DEVE estar com um terminal AE2 aberto (`mc.player.containerMenu instanceof MEStorageMenu`, seja terminal de crafting físico ou wireless terminal). Se não houver terminal aberto, a verificação é abortada instantaneamente com custo zero de processamento.
+   - **Disparo Exclusivo por Clique:** Nenhuma varredura é feita ao digitar na barra do JEI. Apenas quando o jogador **clica** em uma receita (no `RecipesGui` do JEI) ou em um item da lista do JEI, o alvo é capturado.
+   - O cliente envia `JEIRecipeClickPayload` ao servidor com o item e o ID da receita clicada.
+3. **Resolução de Componentes no Servidor (`ServerJEIHandler` & `RecipePatternIndexer.indexJeiClickedRecipe`):**
+   - O servidor recebe o item clicado e executa a busca de receitas e a resolução completa em grafo BFS de todos os subcomponentes.
+   - Os padrões são registrados na grade ME.
+   - **Resultado:** Todos os componentes da receita tornam-se imediatamente craftáveis no terminal AE2 (com o botão "CRAFT"), e os botões de transferência de receita (`+`) do JEI reconhecem imediatamente que todos os componentes são craftáveis pela rede!
+
+---
+
+## 8. Gravação Permanente de Receitas e Fallback Dinâmico de Insumos
+
+1. **Gravação Permanente:**
+   - Sempre que o jogador inicia um autocrafting ou quando uma receita é despachada para montagem, o padrão é registrado como **Permanente**.
+   - O padrão é gravado no NBT/DataComponents (`SavedPatterns`) do próprio item `WildcardPatternItem` e no cache de rede do `WildcardProviderManager`.
+   - Quando o jogador quebra a máquina ou move o item para outro provedor/base, todas as receitas gravadas são preservadas no item.
+   - O tooltip do item exibe a contagem de receitas salvas (`Receitas Gravadas Permanentemente: X`).
+2. **Fallback Dinâmico por Falta de Ingredientes:**
+   - Durante a atualização dos padrões na grade (`refreshGridPatterns`), o sistema avalia se os ingredientes da receita gravada permanente estão disponíveis no sistema ME (`isPatternCraftable`).
+   - Se faltarem materiais e eles não puderem ser produzidos com os itens atuais do ME:
+     - O sistema invoca automaticamente `RecipePatternIndexer.searchCompatibleFallback`.
+     - Executa uma busca rápida por receitas alternativas compatíveis para aquele mesmo item final cujos ingredientes estejam disponíveis em estoque.
+     - Sintetiza a receita alternativa e sua árvore BFS, disponibilizando-a imediatamente para o jogador craftar sem interrupção.
+
+---
+
+## 9. Estrutura de Arquivos no Repositório
 
 ```text
 /
@@ -213,7 +251,11 @@ O mod não altera o código original do AE2 ou do ExtendedAE em disco; ele utili
 ├── src/main/
 │   ├── java/com/example/ae2universalpattern/
 │   │   ├── AE2UniversalPatternMod.java
-│   │   ├── client/ClientTerminalTracker.java
+│   │   ├── client/
+│   │   │   ├── ClientTerminalTracker.java
+│   │   │   └── jei/
+│   │   │       ├── AE2UniversalPatternJeiPlugin.java
+│   │   │       └── JEIInteractionHelper.java
 │   │   ├── crafting/
 │   │   │   ├── IWildcardPatternHolder.java
 │   │   │   ├── RecipePatternIndexer.java
@@ -222,13 +264,16 @@ O mod não altera o código original do AE2 ou do ExtendedAE em disco; ele utili
 │   │   ├── item/WildcardPatternItem.java
 │   │   ├── mixin/
 │   │   │   ├── AE2UniversalPatternMixinPlugin.java
+│   │   │   ├── MixinCraftingCpuLogic.java
 │   │   │   ├── MixinPatternProviderLogic.java
 │   │   │   └── extendedae/
 │   │   │       ├── MixinGuiAssemblerMatrix.java
 │   │   │       ├── MixinTileAssemblerMatrixPattern.java
 │   │   │       └── MixinTileAssemblerMatrixPatternFilter.java
 │   │   └── network/
+│   │       ├── JEIRecipeClickPayload.java
 │   │       ├── SearchQueryPayload.java
+│   │       ├── ServerJEIHandler.java
 │   │       └── ServerSearchHandler.java
 │   ├── resources/
 │   │   ├── ae2universalpattern.mixins.json
@@ -251,7 +296,7 @@ O mod não altera o código original do AE2 ou do ExtendedAE em disco; ele utili
 
 ---
 
-## 8. Guias de Manutenção e Extensão Futura
+## 10. Guias de Manutenção e Extensão Futura
 
 1. **Adicionar Suporte a Outros Tipos de Máquina (Fase 2 opcional):**
    - O mod atual foca deliberadamente em receitas de **Crafting Table** (`RecipeType.CRAFTING`), pois são universais, possuem matriz 3x3 bem definida e são executadas nativamente por Molecular Assemblers e Assembler Matrix.
