@@ -91,6 +91,7 @@ public abstract class MixinPatternProviderLogic implements IWildcardPatternHolde
             if (!this.patterns.contains(patternDetails)) {
                 this.patterns.add(patternDetails);
             }
+            WildcardProviderManager.recordCraftedPattern(this.ae2universalpattern$getGrid(), patternDetails);
         }
         ae2universalpattern$LOGGER.info("[AE2UniversalPattern] PatternProvider pushPattern HEAD for: {}", patternDetails.getOutputs());
     }
@@ -158,5 +159,15 @@ public abstract class MixinPatternProviderLogic implements IWildcardPatternHolde
     @Override
     public IGrid ae2universalpattern$getGrid() {
         return this.mainNode != null ? this.mainNode.getGrid() : null;
+    }
+
+    @Override
+    public net.minecraft.world.item.ItemStack ae2universalpattern$getWildcardStack() {
+        for (var stack : this.patternInventory) {
+            if (!stack.isEmpty() && stack.getItem() instanceof WildcardPatternItem) {
+                return stack;
+            }
+        }
+        return net.minecraft.world.item.ItemStack.EMPTY;
     }
 }

@@ -3,5 +3,6 @@
   "item.ae2universalpattern.wildcard_pattern.desc1": "Place in any Pattern Provider adjacent to a Molecular Assembler or Matrix.",
   "item.ae2universalpattern.wildcard_pattern.desc2": "Dynamically provides all Crafting Table recipes on ME search.",
   "item.ae2universalpattern.wildcard_pattern.desc3": "Automatically prioritizes items already present in the ME Network.",
+  "item.ae2universalpattern.wildcard_pattern.saved": "Permanently Saved Recipes: %s",
   "itemGroup.ae2universalpattern": "AE2 Universal Pattern"
 }

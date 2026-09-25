@@ -93,6 +93,7 @@ public abstract class MixinTileAssemblerMatrixPattern implements IWildcardPatter
             if (!this.patterns.contains(patternDetails)) {
                 this.patterns.add(patternDetails);
             }
+            WildcardProviderManager.recordCraftedPattern(this.ae2universalpattern$getGrid(), patternDetails);
         }
         ae2universalpattern$LOGGER.info("[AE2UniversalPattern] AssemblerMatrix pushPattern HEAD for: {}", patternDetails.getOutputs());
     }
@@ -156,5 +157,15 @@ public abstract class MixinTileAssemblerMatrixPattern implements IWildcardPatter
     public IGrid ae2universalpattern$getGrid() {
         var node = this.ae2universalpattern$getMainNode();
         return node != null ? node.getGrid() : null;
+    }
+
+    @Override
+    public net.minecraft.world.item.ItemStack ae2universalpattern$getWildcardStack() {
+        for (var stack : this.patternInventory) {
+            if (!stack.isEmpty() && stack.getItem() instanceof WildcardPatternItem) {
+                return stack;
+            }
+        }
+        return net.minecraft.world.item.ItemStack.EMPTY;
     }
 }

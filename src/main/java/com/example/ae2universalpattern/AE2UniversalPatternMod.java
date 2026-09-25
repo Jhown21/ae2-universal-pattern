@@ -81,10 +81,16 @@ public class AE2UniversalPatternMod {
     }
 
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
-        event.registrar(MOD_ID).playToServer(
+        var registrar = event.registrar(MOD_ID);
+        registrar.playToServer(
                 SearchQueryPayload.TYPE,
                 SearchQueryPayload.STREAM_CODEC,
                 ServerSearchHandler::handle
+        );
+        registrar.playToServer(
+                com.example.ae2universalpattern.network.JEIRecipeClickPayload.TYPE,
+                com.example.ae2universalpattern.network.JEIRecipeClickPayload.STREAM_CODEC,
+                com.example.ae2universalpattern.network.ServerJEIHandler::handle
         );
     }
 

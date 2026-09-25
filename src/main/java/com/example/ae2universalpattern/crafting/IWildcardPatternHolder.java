@@ -12,6 +12,7 @@ public interface IWildcardPatternHolder {
     List<IPatternDetails> ae2universalpattern$getDynamicPatterns();
     BlockEntity ae2universalpattern$getBlockEntity();
     IGrid ae2universalpattern$getGrid();
+    net.minecraft.world.item.ItemStack ae2universalpattern$getWildcardStack();
 
     default boolean ae2universalpattern$isValid() {
         BlockEntity be = ae2universalpattern$getBlockEntity();

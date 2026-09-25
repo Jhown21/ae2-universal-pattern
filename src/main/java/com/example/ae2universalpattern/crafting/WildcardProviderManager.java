@@ -1,14 +1,27 @@
 package com.example.ae2universalpattern.crafting;
 
 import appeng.api.crafting.IPatternDetails;
+import appeng.api.crafting.PatternDetailsHelper;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.crafting.ICraftingCPU;
 import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.stacks.AEItemKey;
 import appeng.helpers.patternprovider.PatternProviderLogic;
+import com.example.ae2universalpattern.item.WildcardPatternItem;
 import com.mojang.logging.LogUtils;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.slf4j.Logger;
@@ -21,6 +34,8 @@ public final class WildcardProviderManager {
 
     private static final Set<IWildcardPatternHolder> ACTIVE_HOLDERS = Collections.newSetFromMap(new WeakHashMap<>());
     private static final Map<IGrid, Map<UUID, String>> GRID_PLAYER_QUERIES = new WeakHashMap<>();
+    private static final Map<IGrid, Set<IPatternDetails>> GRID_PERMANENT_PATTERNS = new WeakHashMap<>();
+    private static final Map<IGrid, List<IPatternDetails>> GRID_JEI_PATTERNS = new WeakHashMap<>();
     private static final Map<IGrid, List<IPatternDetails>> GRID_PATTERNS = new WeakHashMap<>();
 
     private WildcardProviderManager() {}
@@ -31,6 +46,7 @@ public final class WildcardProviderManager {
             LOGGER.info("[AE2UniversalPattern] Registered Wildcard Pattern Holder: {}", holder.getClass().getSimpleName());
             IGrid grid = holder.ae2universalpattern$getGrid();
             if (grid != null) {
+                loadPermanentPatternsFromHolder(holder, grid);
                 refreshGridPatterns(grid);
             }
         }
@@ -103,8 +119,164 @@ public final class WildcardProviderManager {
         }
     }
 
+    public static synchronized void handleJeiRecipeClick(IGrid targetGrid, ServerPlayer player, String itemIdStr, String recipeIdStr) {
+        if (targetGrid == null) return;
+
+        List<IWildcardPatternHolder> holders = getHoldersForGrid(targetGrid);
+        if (holders.isEmpty()) return;
+
+        Level level = null;
+        for (IWildcardPatternHolder holder : holders) {
+            BlockEntity be = holder.ae2universalpattern$getBlockEntity();
+            if (be != null && be.getLevel() != null) {
+                level = be.getLevel();
+                break;
+            }
+        }
+        if (level == null) return;
+
+        Item targetItem = null;
+        if (itemIdStr != null && !itemIdStr.isBlank()) {
+            ResourceLocation rl = ResourceLocation.tryParse(itemIdStr);
+            if (rl != null && BuiltInRegistries.ITEM.containsKey(rl)) {
+                targetItem = BuiltInRegistries.ITEM.get(rl);
+            }
+        }
+
+        ResourceLocation recipeId = null;
+        if (recipeIdStr != null && !recipeIdStr.isBlank()) {
+            recipeId = ResourceLocation.tryParse(recipeIdStr);
+        }
+
+        Map<Item, Long> systemInventory = getGridItemCounts(targetGrid);
+        List<IPatternDetails> jeiPatterns = RecipePatternIndexer.indexJeiClickedRecipe(targetItem, recipeId, level, systemInventory);
+
+        if (!jeiPatterns.isEmpty()) {
+            GRID_JEI_PATTERNS.put(targetGrid, jeiPatterns);
+            LOGGER.info("[AE2UniversalPattern] JEI recipe click registered {} pattern(s) for target item {} on grid {}",
+                    jeiPatterns.size(), targetItem, targetGrid);
+            refreshGridPatterns(targetGrid);
+        }
+    }
+
+    public static synchronized void recordCraftedPatterns(IGrid grid, Collection<IPatternDetails> patterns) {
+        if (grid == null || patterns == null || patterns.isEmpty()) return;
+
+        Set<IPatternDetails> permanentSet = GRID_PERMANENT_PATTERNS.computeIfAbsent(grid, g -> new LinkedHashSet<>());
+        List<IWildcardPatternHolder> holders = getHoldersForGrid(grid);
+        Level level = null;
+        for (IWildcardPatternHolder h : holders) {
+            BlockEntity be = h.ae2universalpattern$getBlockEntity();
+            if (be != null && be.getLevel() != null) {
+                level = be.getLevel();
+                break;
+            }
+        }
+
+        boolean anyAdded = false;
+        for (IPatternDetails pattern : patterns) {
+            if (pattern != null) {
+                boolean added = permanentSet.add(pattern);
+                if (added) {
+                    anyAdded = true;
+                    if (level != null) {
+                        for (IWildcardPatternHolder holder : holders) {
+                            savePatternToStack(holder.ae2universalpattern$getWildcardStack(), pattern, level);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (anyAdded) {
+            LOGGER.info("[AE2UniversalPattern] Grid now has {} permanent crafting pattern(s).", permanentSet.size());
+            refreshGridPatterns(grid);
+        }
+    }
+
+    public static synchronized void recordCraftedPattern(IGrid grid, IPatternDetails pattern) {
+        if (grid != null && pattern != null) {
+            recordCraftedPatterns(grid, List.of(pattern));
+        }
+    }
+
+    private static void savePatternToStack(ItemStack stack, IPatternDetails pattern, Level level) {
+        if (stack.isEmpty() || !(stack.getItem() instanceof WildcardPatternItem) || pattern == null || level == null) {
+            return;
+        }
+
+        try {
+            CustomData customData = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
+            CompoundTag root = customData.copyTag();
+            ListTag list = root.getList("SavedPatterns", Tag.TAG_COMPOUND);
+
+            AEItemKey defKey = pattern.getDefinition();
+            ItemStack patternStack = defKey != null ? defKey.toStack() : ItemStack.EMPTY;
+            if (patternStack.isEmpty()) return;
+
+            Tag patternTag = patternStack.save(level.registryAccess());
+            if (patternTag instanceof CompoundTag compound) {
+                String defString = defKey.toString();
+                boolean exists = false;
+                for (int i = 0; i < list.size(); i++) {
+                    CompoundTag existing = list.getCompound(i);
+                    if (defString.equals(existing.getString("_defKey"))) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    compound.putString("_defKey", defString);
+                    list.add(compound);
+                    root.put("SavedPatterns", list);
+                    stack.set(DataComponents.CUSTOM_DATA, CustomData.of(root));
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.warn("[AE2UniversalPattern] Failed to save permanent pattern to stack: {}", e.getMessage());
+        }
+    }
+
+    private static void loadPermanentPatternsFromHolder(IWildcardPatternHolder holder, IGrid grid) {
+        if (holder == null || grid == null) return;
+        ItemStack stack = holder.ae2universalpattern$getWildcardStack();
+        if (stack.isEmpty() || !(stack.getItem() instanceof WildcardPatternItem)) return;
+
+        BlockEntity be = holder.ae2universalpattern$getBlockEntity();
+        if (be == null || be.getLevel() == null) return;
+        Level level = be.getLevel();
+
+        try {
+            CustomData customData = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY);
+            if (customData.isEmpty()) return;
+
+            CompoundTag root = customData.copyTag();
+            ListTag list = root.getList("SavedPatterns", Tag.TAG_COMPOUND);
+            if (list.isEmpty()) return;
+
+            Set<IPatternDetails> permanentSet = GRID_PERMANENT_PATTERNS.computeIfAbsent(grid, g -> new LinkedHashSet<>());
+            int loaded = 0;
+            for (int i = 0; i < list.size(); i++) {
+                CompoundTag patternTag = list.getCompound(i);
+                ItemStack patternStack = ItemStack.parse(level.registryAccess(), patternTag).orElse(ItemStack.EMPTY);
+                if (!patternStack.isEmpty()) {
+                    IPatternDetails decoded = PatternDetailsHelper.decodePattern(patternStack, level);
+                    if (decoded != null) {
+                        permanentSet.add(decoded);
+                        loaded++;
+                    }
+                }
+            }
+            LOGGER.info("[AE2UniversalPattern] Loaded {} permanent pattern(s) from Wildcard Pattern item for grid {}",
+                    loaded, grid);
+        } catch (Exception e) {
+            LOGGER.warn("[AE2UniversalPattern] Failed to load permanent patterns from holder stack: {}", e.getMessage());
+        }
+    }
+
     public static synchronized void invalidateCache() {
         GRID_PATTERNS.clear();
+        GRID_JEI_PATTERNS.clear();
         for (IWildcardPatternHolder holder : ACTIVE_HOLDERS) {
             if (holder != null) {
                 holder.ae2universalpattern$setDynamicPatterns(Collections.emptyList());
@@ -116,9 +288,7 @@ public final class WildcardProviderManager {
         if (grid == null) return;
 
         List<IWildcardPatternHolder> holders = getHoldersForGrid(grid);
-        if (holders.isEmpty()) {
-            return;
-        }
+        if (holders.isEmpty()) return;
 
         Map<UUID, String> playerQueries = GRID_PLAYER_QUERIES.get(grid);
         Set<String> activeQueries = new HashSet<>();
@@ -157,58 +327,88 @@ public final class WildcardProviderManager {
                 break;
             }
         }
-        if (level == null) {
-            return;
-        }
+        if (level == null) return;
 
         Map<Item, Long> systemInventory = getGridItemCounts(grid);
+        Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOut = RecipePatternIndexer.getRecipesByOutput(level);
+        Map<Item, Long> scoreCache = new HashMap<>();
 
-        List<IPatternDetails> newPatterns = RecipePatternIndexer.searchCraftingRecipes(
+        Set<AEItemKey> seenKeys = new HashSet<>();
+        List<IPatternDetails> combinedPatterns = new ArrayList<>();
+
+        // 1. Receitas Permanentes (Craftadas anteriormente)
+        Set<IPatternDetails> permanentPatterns = GRID_PERMANENT_PATTERNS.get(grid);
+        if (permanentPatterns != null) {
+            for (IPatternDetails perm : permanentPatterns) {
+                if (perm == null) continue;
+                if (seenKeys.add(perm.getDefinition())) {
+                    combinedPatterns.add(perm);
+                }
+
+                // Verifica se os ingredientes da receita gravada permanente estão disponíveis no sistema.
+                // Caso NÃO estejam disponíveis, faz uma busca rápida achando alguma receita compatível!
+                boolean craftable = RecipePatternIndexer.isPatternCraftable(perm, systemInventory, recipesByOut, scoreCache);
+                if (!craftable) {
+                    var outputs = perm.getOutputs();
+                    if (!outputs.isEmpty() && outputs.get(0).what() instanceof AEItemKey outKey) {
+                        Item outItem = outKey.getItem();
+                        List<IPatternDetails> fallbackPatterns = RecipePatternIndexer.searchCompatibleFallback(
+                                outItem,
+                                level,
+                                systemInventory,
+                                Collections.emptySet()
+                        );
+                        for (IPatternDetails fb : fallbackPatterns) {
+                            if (seenKeys.add(fb.getDefinition())) {
+                                combinedPatterns.add(fb);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Receitas clicadas no JEI com terminal aberto
+        List<IPatternDetails> jeiPatterns = GRID_JEI_PATTERNS.get(grid);
+        if (jeiPatterns != null) {
+            for (IPatternDetails jeiP : jeiPatterns) {
+                if (seenKeys.add(jeiP.getDefinition())) {
+                    combinedPatterns.add(jeiP);
+                }
+            }
+        }
+
+        // 3. Receitas da busca ativa no terminal ME
+        List<IPatternDetails> searchPatterns = RecipePatternIndexer.searchCraftingRecipes(
                 level,
                 activeQueries,
                 systemInventory
         );
+        for (IPatternDetails sp : searchPatterns) {
+            if (seenKeys.add(sp.getDefinition())) {
+                combinedPatterns.add(sp);
+            }
+        }
 
         List<IPatternDetails> finalPatterns;
         if (isGridBusy) {
             List<IPatternDetails> current = GRID_PATTERNS.getOrDefault(grid, Collections.emptyList());
-            Set<AEItemKey> seen = new HashSet<>();
-            finalPatterns = new ArrayList<>();
+            Set<AEItemKey> busySeen = new HashSet<>(seenKeys);
+            finalPatterns = new ArrayList<>(combinedPatterns);
             for (IPatternDetails p : current) {
-                if (seen.add(p.getDefinition())) {
-                    finalPatterns.add(p);
-                }
-            }
-            for (IPatternDetails p : newPatterns) {
-                if (seen.add(p.getDefinition())) {
+                if (busySeen.add(p.getDefinition())) {
                     finalPatterns.add(p);
                 }
             }
         } else {
-            finalPatterns = newPatterns;
+            finalPatterns = combinedPatterns;
         }
 
         GRID_PATTERNS.put(grid, finalPatterns);
-        LOGGER.info("[AE2UniversalPattern] Loaded {} dynamic crafting patterns to {} holders (queries: {})",
-                finalPatterns.size(), holders.size(), activeQueries);
-
-        if (!activeQueries.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            int count = 0;
-            for (IPatternDetails p : finalPatterns) {
-                var outputs = p.getOutputs();
-                if (!outputs.isEmpty() && outputs.get(0).what() != null) {
-                    if (count > 0) sb.append(", ");
-                    sb.append(outputs.get(0).what().getDisplayName().getString());
-                    count++;
-                    if (count >= 15) {
-                        sb.append("...");
-                        break;
-                    }
-                }
-            }
-            LOGGER.info("[AE2UniversalPattern] Sample outputs for {}: [{}]", activeQueries, sb);
-        }
+        LOGGER.info("[AE2UniversalPattern] Loaded {} dynamic crafting patterns to {} holders (queries: {}, permanent: {}, jei: {})",
+                finalPatterns.size(), holders.size(), activeQueries,
+                permanentPatterns != null ? permanentPatterns.size() : 0,
+                jeiPatterns != null ? jeiPatterns.size() : 0);
 
         for (IWildcardPatternHolder holder : holders) {
             holder.ae2universalpattern$setDynamicPatterns(finalPatterns);

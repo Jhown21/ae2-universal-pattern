@@ -22,6 +22,17 @@ public class WildcardPatternItem extends Item {
                 .withStyle(ChatFormatting.AQUA));
         tooltipComponents.add(Component.translatable("item.ae2universalpattern.wildcard_pattern.desc3")
                 .withStyle(ChatFormatting.DARK_GRAY));
+
+        net.minecraft.world.item.component.CustomData customData =
+                stack.getOrDefault(net.minecraft.core.component.DataComponents.CUSTOM_DATA, net.minecraft.world.item.component.CustomData.EMPTY);
+        if (!customData.isEmpty()) {
+            int count = customData.copyTag().getList("SavedPatterns", net.minecraft.nbt.Tag.TAG_COMPOUND).size();
+            if (count > 0) {
+                tooltipComponents.add(Component.translatable("item.ae2universalpattern.wildcard_pattern.saved", count)
+                        .withStyle(ChatFormatting.GOLD));
+            }
+        }
+
         super.appendHoverText(stack, context, tooltipComponents, tooltipFlag);
     }
 }

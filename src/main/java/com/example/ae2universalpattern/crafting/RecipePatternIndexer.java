@@ -228,6 +228,147 @@ public final class RecipePatternIndexer {
         return List.copyOf(result);
     }
 
+    public static List<IPatternDetails> indexJeiClickedRecipe(
+            Item targetItem,
+            ResourceLocation recipeId,
+            Level level,
+            Map<Item, Long> systemInventory) {
+
+        if (level == null) return Collections.emptyList();
+
+        Map<Item, Long> inv = systemInventory != null ? systemInventory : Collections.emptyMap();
+        Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOut = getRecipesByOutput(level);
+        Map<Item, Long> scoreCache = new HashMap<>();
+
+        RecipeHolder<CraftingRecipe> selectedHolder = null;
+
+        if (recipeId != null) {
+            var opt = level.getRecipeManager().byKey(recipeId);
+            if (opt.isPresent() && opt.get().value() instanceof CraftingRecipe) {
+                //noinspection unchecked
+                selectedHolder = (RecipeHolder<CraftingRecipe>) (Object) opt.get();
+            }
+        }
+
+        if (selectedHolder == null && targetItem != null) {
+            List<RecipeHolder<CraftingRecipe>> candidates = recipesByOut.get(targetItem);
+            if (candidates != null && !candidates.isEmpty()) {
+                long bestScore = Long.MIN_VALUE;
+                for (RecipeHolder<CraftingRecipe> holder : candidates) {
+                    if (holder.value().isSpecial()) continue;
+                    long score = computeRecipeAvailabilityScore(holder.value(), inv, recipesByOut, scoreCache);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        selectedHolder = holder;
+                    }
+                }
+            }
+        }
+
+        if (selectedHolder == null) {
+            return Collections.emptyList();
+        }
+
+        List<IPatternDetails> result = new ArrayList<>();
+        Set<AEItemKey> seenPatternKeys = new HashSet<>();
+        Set<RecipeHolder<CraftingRecipe>> encodedRecipes = new HashSet<>();
+
+        processPrimaryRecipe(
+                selectedHolder,
+                level,
+                inv,
+                recipesByOut,
+                scoreCache,
+                result,
+                seenPatternKeys,
+                encodedRecipes
+        );
+
+        LOGGER.info("[AE2UniversalPattern] JEI recipe click indexed {} pattern(s) for item: {} (recipe: {})",
+                result.size(), targetItem, recipeId);
+
+        return List.copyOf(result);
+    }
+
+    public static List<IPatternDetails> searchCompatibleFallback(
+            Item outputItem,
+            Level level,
+            Map<Item, Long> systemInventory,
+            Set<ResourceLocation> excludeRecipeIds) {
+
+        if (level == null || outputItem == null) return Collections.emptyList();
+
+        Map<Item, Long> inv = systemInventory != null ? systemInventory : Collections.emptyMap();
+        Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOut = getRecipesByOutput(level);
+        Map<Item, Long> scoreCache = new HashMap<>();
+
+        List<RecipeHolder<CraftingRecipe>> candidates = recipesByOut.get(outputItem);
+        if (candidates == null || candidates.isEmpty()) return Collections.emptyList();
+
+        RecipeHolder<CraftingRecipe> bestFallback = null;
+        long bestScore = -1L;
+
+        for (RecipeHolder<CraftingRecipe> holder : candidates) {
+            if (holder.value().isSpecial()) continue;
+            if (excludeRecipeIds != null && excludeRecipeIds.contains(holder.id())) continue;
+
+            long score = computeRecipeAvailabilityScore(holder.value(), inv, recipesByOut, scoreCache);
+            if (score >= 100_000L && score > bestScore) {
+                bestScore = score;
+                bestFallback = holder;
+            }
+        }
+
+        if (bestFallback == null) return Collections.emptyList();
+
+        List<IPatternDetails> result = new ArrayList<>();
+        Set<AEItemKey> seenPatternKeys = new HashSet<>();
+        Set<RecipeHolder<CraftingRecipe>> encodedRecipes = new HashSet<>();
+
+        processPrimaryRecipe(
+                bestFallback,
+                level,
+                inv,
+                recipesByOut,
+                scoreCache,
+                result,
+                seenPatternKeys,
+                encodedRecipes
+        );
+
+        return List.copyOf(result);
+    }
+
+    public static boolean isPatternCraftable(
+            IPatternDetails pattern,
+            Map<Item, Long> systemInventory,
+            Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOutput,
+            Map<Item, Long> scoreCache) {
+
+        if (pattern == null) return false;
+        for (var input : pattern.getInputs()) {
+            boolean slotSatisfied = false;
+            for (var candidate : input.getPossibleInputs()) {
+                if (candidate.what() instanceof AEItemKey itemKey) {
+                    long count = systemInventory.getOrDefault(itemKey.getItem(), 0L);
+                    if (count > 0) {
+                        slotSatisfied = true;
+                        break;
+                    }
+                    long score = getItemScore(itemKey.getItem(), systemInventory, recipesByOutput, scoreCache, new HashSet<>(), 0);
+                    if (score >= 100_000L) {
+                        slotSatisfied = true;
+                        break;
+                    }
+                }
+            }
+            if (!slotSatisfied) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static void processPrimaryRecipe(
             RecipeHolder<CraftingRecipe> holder,
             Level level,

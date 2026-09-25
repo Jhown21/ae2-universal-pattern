@@ -6,6 +6,7 @@
   "plugin": "com.example.ae2universalpattern.mixin.AE2UniversalPatternMixinPlugin",
   "refmap": "ae2universalpattern.refmap.json",
   "mixins": [
+    "MixinCraftingCpuLogic",
     "MixinPatternProviderLogic",
     "extendedae.MixinTileAssemblerMatrixPattern",
     "extendedae.MixinTileAssemblerMatrixPatternFilter"

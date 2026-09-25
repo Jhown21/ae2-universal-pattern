@@ -15,6 +15,11 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 
+import appeng.menu.me.common.MEStorageMenu;
+import com.example.ae2universalpattern.client.jei.JEIInteractionHelper;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforge.client.event.ScreenEvent;
+
 import java.lang.reflect.Field;
 
 @EventBusSubscriber(modid = AE2UniversalPatternMod.MOD_ID, value = Dist.CLIENT)
@@ -46,6 +51,23 @@ public final class ClientTerminalTracker {
     }
 
     private ClientTerminalTracker() {}
+
+    @SubscribeEvent
+    public static void onScreenMouseClicked(ScreenEvent.MouseButtonPressed.Pre event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+
+        boolean inTerminal = mc.player.containerMenu instanceof MEStorageMenu;
+        if (!inTerminal && mc.screen instanceof MEStorageScreen) {
+            inTerminal = true;
+        }
+
+        if (!inTerminal) return;
+
+        if (ModList.get().isLoaded("jei")) {
+            JEIInteractionHelper.handleScreenClick(event.getScreen(), event.getMouseX(), event.getMouseY(), event.getButton());
+        }
+    }
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
