@@ -1,0 +1,7 @@
+{
+  "item.ae2universalpattern.wildcard_pattern": "Padrão Universal de Crafting",
+  "item.ae2universalpattern.wildcard_pattern.desc1": "Insira em qualquer Pattern Provider adjacente a um Molecular Assembler ou Matrix.",
+  "item.ae2universalpattern.wildcard_pattern.desc2": "Fornece dinamicamente todas as receitas de Crafting Table ao pesquisar no ME.",
+  "item.ae2universalpattern.wildcard_pattern.desc3": "Prioriza automaticamente os itens existentes no sistema ME.",
+  "itemGroup.ae2universalpattern": "AE2 Universal Pattern"
+}
