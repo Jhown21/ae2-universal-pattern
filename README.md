@@ -1,6 +1,6 @@
 # AE2 Universal Pattern
 
-[![Build](https://github.com/Jhown/ae2universalpattern/actions/workflows/build.yml/badge.svg)](https://github.com/Jhown/ae2universalpattern/actions/workflows/build.yml)
+[![Build](https://github.com/Jhown21/ae2-universal-pattern/actions/workflows/build.yml/badge.svg)](https://github.com/Jhown21/ae2-universal-pattern/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-brightgreen.svg)](https://minecraft.net/)
 [![NeoForge](https://img.shields.io/badge/NeoForge-21.1.251+-orange.svg)](https://neoforged.net/)
@@ -60,8 +60,8 @@ Compatible with standard **AE2 Pattern Providers** and **ExtendedAE Assembler Ma
 Clone the repository and build using Gradle:
 
 ```bash
-git clone https://github.com/Jhown/ae2universalpattern.git
-cd ae2universalpattern
+git clone https://github.com/Jhown21/ae2-universal-pattern.git
+cd ae2-universal-pattern
 ./gradlew build
 ```
 
