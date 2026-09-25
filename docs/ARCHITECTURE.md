@@ -172,8 +172,18 @@ Diferente de abordagens recursivas ingênuas que geram estouro de pilha (*StackO
    - **Resultado:** Todas as pontes de conversão ficam 100% disponíveis no plano de crafting, garantindo que "Faltando: Pepita de Ferro" nunca ocorra se o jogador possuir barras ou blocos.
 3. **Limites e Segurança Operacional:**
    - Profundidade máxima de BFS (`MAX_BFS_DEPTH`): **32 níveis** (suporta cadeias extremas como células de 1048M / 256M que ultrapassam 12 tiers).
-   - Limite de receitas primárias: **60 receitas**.
-   - Limite total de padrões dinâmicos por grade: **1500 padrões**.
+   - Limite de receitas primárias (`MAX_PRIMARY_RECIPES`): **250 receitas** (expandido para modpacks massivos com mais de 45.000 receitas como o ATM10).
+   - Limite total de padrões dinâmicos por grade (`MAX_TOTAL_PATTERNS`): **2500 padrões**.
+
+### 5.5. Relevância de Pesquisa e Multi-Tokens Compostos (`matchesAnyQuery` & `computeQueryRelevanceScore`)
+- **Multi-Tokens Compostos:** O usuário pode combinar filtros no terminal ME ou JEI, por exemplo `@ae2 fluix` ou `@advanced_ae quantum` ou `#c:ingots iron`. Cada token é avaliado individualmente (`@` filtra namespace do mod, `#` filtra tag do item, e palavras soltas filtram nome e path). Todos os tokens devem ser satisfeitos simultaneamente.
+- **Pontuação de Relevância Direta:**
+  - Correspondência exata de nome ou path: $+2.000.000.000$ pontos.
+  - Nome ou path começando com o termo de busca: $+1.000.000.000$ pontos.
+  - Correspondência de palavra isolada: $+500.000.000$ pontos.
+  - Substring em qualquer posição: $+200.000.000$ pontos.
+- **Desempate por Disponibilidade:** Entre itens com a mesma relevância textual, o score de disponibilidade de insumos no ME atua como desempate, trazendo sempre o item mais acessível para a primeira posição.
+- **Prioridade Dinâmica na Grade:** Quando há uma pesquisa ativa no terminal ME (`!activeQueries.isEmpty()`), os resultados da busca são inseridos **no topo** dos padrões da grade ME antes dos padrões gravados ou do JEI.
 
 ---
 
