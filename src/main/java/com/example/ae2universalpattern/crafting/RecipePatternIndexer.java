@@ -28,13 +28,13 @@ public final class RecipePatternIndexer {
     private static Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOutput = null;
     private static int lastRecipeCount = -1;
 
-    private static final int MAX_PRIMARY_RECIPES = 60;
-    private static final int MAX_TOTAL_PATTERNS = 1500;
+    private static final int MAX_PRIMARY_RECIPES = 250;
+    private static final int MAX_TOTAL_PATTERNS = 2500;
 
     private RecipePatternIndexer() {}
 
     private record VariantCandidate(ItemStack stack, long score) {}
-    private record ScoredRecipe(RecipeHolder<CraftingRecipe> holder, long score) {}
+    private record ScoredRecipe(RecipeHolder<CraftingRecipe> holder, long relevanceScore, long availabilityScore, long totalScore) {}
     private record ScoredSubRecipe(RecipeHolder<CraftingRecipe> holder, ItemStack[] inputs, long score) {}
     private record QueuedItem(Item item, int depth) {}
     private static final int MAX_BFS_DEPTH = 32;
@@ -114,15 +114,16 @@ public final class RecipePatternIndexer {
 
             if (hasSearchQuery) {
                 if (matchesAnyQuery(previewOut, validQueries)) {
-                    long score = computeRecipeAvailabilityScore(recipe, inv, recipesByOut, scoreCache);
-                    scoredCandidates.add(new ScoredRecipe(holder, score));
+                    long relScore = computeQueryRelevanceScore(previewOut, validQueries);
+                    long availScore = computeRecipeAvailabilityScore(recipe, inv, recipesByOut, scoreCache);
+                    scoredCandidates.add(new ScoredRecipe(holder, relScore, availScore, relScore + availScore));
                 }
             } else {
                 // Quando a busca está vazia, lista receitas com materiais disponíveis
                 if (!inv.isEmpty()) {
                     long score = computeRecipeAvailabilityScore(recipe, inv, recipesByOut, scoreCache);
                     if (score >= 10_000L) {
-                        scoredCandidates.add(new ScoredRecipe(holder, score));
+                        scoredCandidates.add(new ScoredRecipe(holder, 0L, score, score));
                     }
                 }
             }
@@ -146,7 +147,8 @@ public final class RecipePatternIndexer {
                         || out.is(net.minecraft.world.item.Items.IRON_INGOT)
                         || out.is(net.minecraft.world.item.Items.IRON_NUGGET)) {
                     long score = computeRecipeAvailabilityScore(recipe, inv, recipesByOut, scoreCache);
-                    scoredCandidates.add(new ScoredRecipe(holder, Math.max(score, 10L)));
+                    long s = Math.max(score, 10L);
+                    scoredCandidates.add(new ScoredRecipe(holder, 0L, s, s));
                 }
             }
         }
@@ -155,8 +157,8 @@ public final class RecipePatternIndexer {
             return List.of();
         }
 
-        // 2. Ordena os resultados: receitas com materiais disponíveis no sistema ME ficam no topo absoluto
-        scoredCandidates.sort((a, b) -> Long.compare(b.score, a.score));
+        // 2. Ordena os resultados: relevância da busca no topo absoluto, com materiais disponíveis como desempate
+        scoredCandidates.sort((a, b) -> Long.compare(b.totalScore, a.totalScore));
 
         // Descarta receitas inferiores concorrentes para o mesmo item de saída:
         // Se para o mesmo item existe receita realizável com materiais do ME (>= 100_000L),
@@ -170,7 +172,7 @@ public final class RecipePatternIndexer {
                 continue;
             }
             if (!out.isEmpty()) {
-                bestScoreByItem.merge(out.getItem(), sr.score, Math::max);
+                bestScoreByItem.merge(out.getItem(), sr.availabilityScore, Math::max);
             }
         }
 
@@ -187,7 +189,7 @@ public final class RecipePatternIndexer {
             if (out.isEmpty()) continue;
 
             long bestForThisItem = bestScoreByItem.getOrDefault(out.getItem(), 0L);
-            if (bestForThisItem >= 100_000L && sr.score < 100_000L) {
+            if (bestForThisItem >= 100_000L && sr.availabilityScore < 100_000L) {
                 continue;
             }
 
@@ -886,6 +888,44 @@ public final class RecipePatternIndexer {
                 .replaceAll("\\p{M}", "");
     }
 
+    private static long computeQueryRelevanceScore(ItemStack stack, List<String> queries) {
+        if (stack.isEmpty() || queries == null || queries.isEmpty()) {
+            return 0L;
+        }
+
+        Item item = stack.getItem();
+        ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
+        String path = id.getPath().toLowerCase(Locale.ROOT);
+        String fullId = id.toString().toLowerCase(Locale.ROOT);
+        String cleanDisplayName = cleanString(stack.getHoverName().getString());
+
+        long maxScore = 0L;
+
+        for (String rawQuery : queries) {
+            if (rawQuery == null || rawQuery.isBlank()) continue;
+            String q = cleanString(rawQuery);
+
+            long score;
+            if (cleanDisplayName.equals(q) || path.equals(q) || fullId.equals(q)) {
+                score = 2_000_000_000L;
+            } else if (cleanDisplayName.startsWith(q) || path.startsWith(q)) {
+                score = 1_000_000_000L;
+            } else if (cleanDisplayName.contains(" " + q) || path.contains("_" + q)) {
+                score = 500_000_000L;
+            } else if (cleanDisplayName.contains(q) || path.contains(q)) {
+                score = 200_000_000L;
+            } else {
+                score = 50_000_000L;
+            }
+
+            if (score > maxScore) {
+                maxScore = score;
+            }
+        }
+
+        return maxScore;
+    }
+
     private static boolean matchesAnyQuery(ItemStack stack, List<String> queries) {
         if (stack.isEmpty()) {
             return false;
@@ -899,37 +939,44 @@ public final class RecipePatternIndexer {
         String cleanDisplayName = cleanString(stack.getHoverName().getString());
 
         for (String q : queries) {
-            if (q.startsWith("@")) {
-                String mod = q.substring(1).trim();
-                if (!mod.isEmpty() && modId.contains(mod)) {
-                    return true;
-                }
-            } else if (q.startsWith("#")) {
-                String tagQuery = q.substring(1).trim();
-                if (!tagQuery.isEmpty()) {
-                    boolean tagMatches = stack.getTags().anyMatch(tagKey -> {
-                        String tagPath = tagKey.location().getPath().toLowerCase(Locale.ROOT);
-                        String tagFull = tagKey.location().toString().toLowerCase(Locale.ROOT);
-                        return tagPath.contains(tagQuery) || tagFull.contains(tagQuery);
-                    });
-                    if (tagMatches) {
-                        return true;
+            if (q == null || q.isBlank()) continue;
+            String[] tokens = q.trim().split("\\s+");
+            boolean allTokensMatch = true;
+
+            for (String rawToken : tokens) {
+                if (rawToken.isEmpty()) continue;
+                String token = cleanString(rawToken);
+
+                if (token.startsWith("@")) {
+                    String mod = token.substring(1);
+                    if (mod.isEmpty() || !modId.contains(mod)) {
+                        allTokensMatch = false;
+                        break;
                     }
-                }
-            } else {
-                String[] tokens = q.split("\\s+");
-                boolean allTokensMatch = true;
-                for (String token : tokens) {
-                    if (token.isEmpty()) continue;
+                } else if (token.startsWith("#")) {
+                    String tagQuery = token.substring(1);
+                    if (!tagQuery.isEmpty()) {
+                        boolean tagMatches = stack.getTags().anyMatch(tagKey -> {
+                            String tagPath = tagKey.location().getPath().toLowerCase(Locale.ROOT);
+                            String tagFull = tagKey.location().toString().toLowerCase(Locale.ROOT);
+                            return tagPath.contains(tagQuery) || tagFull.contains(tagQuery);
+                        });
+                        if (!tagMatches) {
+                            allTokensMatch = false;
+                            break;
+                        }
+                    }
+                } else {
                     boolean tokenMatches = cleanDisplayName.contains(token) || path.contains(token) || fullId.contains(token);
                     if (!tokenMatches) {
                         allTokensMatch = false;
                         break;
                     }
                 }
-                if (allTokensMatch) {
-                    return true;
-                }
+            }
+
+            if (allTokensMatch) {
+                return true;
             }
         }
         return false;

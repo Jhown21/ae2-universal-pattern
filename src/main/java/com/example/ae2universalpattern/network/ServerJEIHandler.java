@@ -2,6 +2,7 @@ package com.example.ae2universalpattern.network;
 
 import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
+import appeng.api.networking.security.IActionHost;
 import appeng.menu.me.common.MEStorageMenu;
 import com.example.ae2universalpattern.crafting.WildcardProviderManager;
 import net.minecraft.server.level.ServerPlayer;
@@ -20,7 +21,10 @@ public final class ServerJEIHandler {
             IGrid targetGrid = null;
             if (player.containerMenu instanceof MEStorageMenu meStorageMenu) {
                 IGridNode hostNode = meStorageMenu.getGridNode();
-                if (hostNode != null && hostNode.isActive()) {
+                if (hostNode == null && meStorageMenu.getHost() instanceof IActionHost actionHost) {
+                    hostNode = actionHost.getActionableNode();
+                }
+                if (hostNode != null) {
                     targetGrid = hostNode.getGrid();
                 }
             }

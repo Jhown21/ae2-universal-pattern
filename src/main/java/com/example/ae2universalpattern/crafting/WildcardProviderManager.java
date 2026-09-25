@@ -336,57 +336,93 @@ public final class WildcardProviderManager {
         Set<AEItemKey> seenKeys = new HashSet<>();
         List<IPatternDetails> combinedPatterns = new ArrayList<>();
 
-        // 1. Receitas Permanentes (Craftadas anteriormente)
-        Set<IPatternDetails> permanentPatterns = GRID_PERMANENT_PATTERNS.get(grid);
-        if (permanentPatterns != null) {
-            for (IPatternDetails perm : permanentPatterns) {
-                if (perm == null) continue;
-                if (seenKeys.add(perm.getDefinition())) {
-                    combinedPatterns.add(perm);
+        if (!activeQueries.isEmpty()) {
+            // 1. Receitas da busca ativa no terminal ME vêm PRIMEIRO quando há termo digitado
+            List<IPatternDetails> searchPatterns = RecipePatternIndexer.searchCraftingRecipes(
+                    level,
+                    activeQueries,
+                    systemInventory
+            );
+            for (IPatternDetails sp : searchPatterns) {
+                if (seenKeys.add(sp.getDefinition())) {
+                    combinedPatterns.add(sp);
                 }
+            }
 
-                // Verifica se os ingredientes da receita gravada permanente estão disponíveis no sistema.
-                // Caso NÃO estejam disponíveis, faz uma busca rápida achando alguma receita compatível!
-                boolean craftable = RecipePatternIndexer.isPatternCraftable(perm, systemInventory, recipesByOut, scoreCache);
-                if (!craftable) {
-                    var outputs = perm.getOutputs();
-                    if (!outputs.isEmpty() && outputs.get(0).what() instanceof AEItemKey outKey) {
-                        Item outItem = outKey.getItem();
-                        List<IPatternDetails> fallbackPatterns = RecipePatternIndexer.searchCompatibleFallback(
-                                outItem,
-                                level,
-                                systemInventory,
-                                Collections.emptySet()
-                        );
-                        for (IPatternDetails fb : fallbackPatterns) {
-                            if (seenKeys.add(fb.getDefinition())) {
-                                combinedPatterns.add(fb);
+            // 2. Receitas Permanentes (Craftadas anteriormente)
+            Set<IPatternDetails> permanentPatterns = GRID_PERMANENT_PATTERNS.get(grid);
+            if (permanentPatterns != null) {
+                for (IPatternDetails perm : permanentPatterns) {
+                    if (perm == null) continue;
+                    if (seenKeys.add(perm.getDefinition())) {
+                        combinedPatterns.add(perm);
+                    }
+                }
+            }
+
+            // 3. Receitas clicadas no JEI
+            List<IPatternDetails> jeiPatterns = GRID_JEI_PATTERNS.get(grid);
+            if (jeiPatterns != null) {
+                for (IPatternDetails jeiP : jeiPatterns) {
+                    if (seenKeys.add(jeiP.getDefinition())) {
+                        combinedPatterns.add(jeiP);
+                    }
+                }
+            }
+        } else {
+            // Busca vazia:
+            // 1. Receitas Permanentes (Craftadas anteriormente) com fallback dinâmico
+            Set<IPatternDetails> permanentPatterns = GRID_PERMANENT_PATTERNS.get(grid);
+            if (permanentPatterns != null) {
+                for (IPatternDetails perm : permanentPatterns) {
+                    if (perm == null) continue;
+                    if (seenKeys.add(perm.getDefinition())) {
+                        combinedPatterns.add(perm);
+                    }
+
+                    // Verifica se os ingredientes da receita gravada permanente estão disponíveis no sistema.
+                    // Caso NÃO estejam disponíveis, faz uma busca rápida achando alguma receita compatível!
+                    boolean craftable = RecipePatternIndexer.isPatternCraftable(perm, systemInventory, recipesByOut, scoreCache);
+                    if (!craftable) {
+                        var outputs = perm.getOutputs();
+                        if (!outputs.isEmpty() && outputs.get(0).what() instanceof AEItemKey outKey) {
+                            Item outItem = outKey.getItem();
+                            List<IPatternDetails> fallbackPatterns = RecipePatternIndexer.searchCompatibleFallback(
+                                    outItem,
+                                    level,
+                                    systemInventory,
+                                    Collections.emptySet()
+                            );
+                            for (IPatternDetails fb : fallbackPatterns) {
+                                if (seenKeys.add(fb.getDefinition())) {
+                                    combinedPatterns.add(fb);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // 2. Receitas clicadas no JEI com terminal aberto
-        List<IPatternDetails> jeiPatterns = GRID_JEI_PATTERNS.get(grid);
-        if (jeiPatterns != null) {
-            for (IPatternDetails jeiP : jeiPatterns) {
-                if (seenKeys.add(jeiP.getDefinition())) {
-                    combinedPatterns.add(jeiP);
+            // 2. Receitas clicadas no JEI com terminal aberto
+            List<IPatternDetails> jeiPatterns = GRID_JEI_PATTERNS.get(grid);
+            if (jeiPatterns != null) {
+                for (IPatternDetails jeiP : jeiPatterns) {
+                    if (seenKeys.add(jeiP.getDefinition())) {
+                        combinedPatterns.add(jeiP);
+                    }
                 }
             }
-        }
 
-        // 3. Receitas da busca ativa no terminal ME
-        List<IPatternDetails> searchPatterns = RecipePatternIndexer.searchCraftingRecipes(
-                level,
-                activeQueries,
-                systemInventory
-        );
-        for (IPatternDetails sp : searchPatterns) {
-            if (seenKeys.add(sp.getDefinition())) {
-                combinedPatterns.add(sp);
+            // 3. Receitas disponíveis com estoque no ME (básicas)
+            List<IPatternDetails> searchPatterns = RecipePatternIndexer.searchCraftingRecipes(
+                    level,
+                    activeQueries,
+                    systemInventory
+            );
+            for (IPatternDetails sp : searchPatterns) {
+                if (seenKeys.add(sp.getDefinition())) {
+                    combinedPatterns.add(sp);
+                }
             }
         }
 
@@ -407,8 +443,19 @@ public final class WildcardProviderManager {
         GRID_PATTERNS.put(grid, finalPatterns);
         LOGGER.info("[AE2UniversalPattern] Loaded {} dynamic crafting patterns to {} holders (queries: {}, permanent: {}, jei: {})",
                 finalPatterns.size(), holders.size(), activeQueries,
-                permanentPatterns != null ? permanentPatterns.size() : 0,
-                jeiPatterns != null ? jeiPatterns.size() : 0);
+                GRID_PERMANENT_PATTERNS.get(grid) != null ? GRID_PERMANENT_PATTERNS.get(grid).size() : 0,
+                GRID_JEI_PATTERNS.get(grid) != null ? GRID_JEI_PATTERNS.get(grid).size() : 0);
+
+        if (LOGGER.isInfoEnabled() && !finalPatterns.isEmpty()) {
+            List<String> sampleNames = new ArrayList<>();
+            for (int i = 0; i < Math.min(10, finalPatterns.size()); i++) {
+                var out = finalPatterns.get(i).getOutputs();
+                if (!out.isEmpty()) {
+                    sampleNames.add(out.get(0).what().toString());
+                }
+            }
+            LOGGER.info("[AE2UniversalPattern] Sample outputs for {}: [{}]", grid, String.join(", ", sampleNames));
+        }
 
         for (IWildcardPatternHolder holder : holders) {
             holder.ae2universalpattern$setDynamicPatterns(finalPatterns);

@@ -75,7 +75,10 @@ public final class ClientTerminalTracker {
         Screen screen = mc.screen;
 
         if (screen instanceof MEStorageScreen<?> storageScreen) {
-            wasInAETerminal = true;
+            if (!wasInAETerminal) {
+                wasInAETerminal = true;
+                lastSentQuery = null;
+            }
             String currentSearch = extractSearchText(storageScreen);
 
             if (!currentSearch.equals(pendingQuery)) {
@@ -92,10 +95,25 @@ public final class ClientTerminalTracker {
                     PacketDistributor.sendToServer(new SearchQueryPayload(pendingQuery));
                 }
             }
+        } else if (wasInAETerminal) {
+            wasInAETerminal = false;
+            lastSentQuery = null;
+            pendingQuery = "";
+            LOGGER.info("[AE2UniversalPattern] Left ME Terminal screen. Clearing server search query.");
+            PacketDistributor.sendToServer(new SearchQueryPayload(""));
         }
     }
 
     private static String extractSearchText(MEStorageScreen<?> screen) {
+        if (SEARCH_FIELD != null) {
+            try {
+                EditBox editBox = (EditBox) SEARCH_FIELD.get(screen);
+                if (editBox != null && editBox.isVisible()) {
+                    return editBox.getValue();
+                }
+            } catch (Exception ignored) {}
+        }
+
         if (REPO_FIELD != null) {
             try {
                 Repo repo = (Repo) REPO_FIELD.get(screen);
@@ -117,7 +135,7 @@ public final class ClientTerminalTracker {
 
         try {
             for (var child : screen.children()) {
-                if (child instanceof EditBox editBox) {
+                if (child instanceof EditBox editBox && editBox.isVisible()) {
                     return editBox.getValue();
                 }
             }

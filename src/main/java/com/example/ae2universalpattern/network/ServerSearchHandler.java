@@ -2,12 +2,17 @@ package com.example.ae2universalpattern.network;
 
 import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
+import appeng.api.networking.security.IActionHost;
 import appeng.menu.me.common.MEStorageMenu;
 import com.example.ae2universalpattern.crafting.WildcardProviderManager;
+import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import org.slf4j.Logger;
 
 public final class ServerSearchHandler {
+
+    private static final Logger LOGGER = LogUtils.getLogger();
 
     private ServerSearchHandler() {}
 
@@ -20,12 +25,16 @@ public final class ServerSearchHandler {
             IGrid targetGrid = null;
             if (player.containerMenu instanceof MEStorageMenu meStorageMenu) {
                 IGridNode hostNode = meStorageMenu.getGridNode();
-                if (hostNode != null && hostNode.isActive()) {
+                if (hostNode == null && meStorageMenu.getHost() instanceof IActionHost actionHost) {
+                    hostNode = actionHost.getActionableNode();
+                }
+                if (hostNode != null) {
                     targetGrid = hostNode.getGrid();
                 }
             }
 
             if (targetGrid != null) {
+                LOGGER.info("[AE2UniversalPattern] Player {} search updated: '{}'", player.getGameProfile().getName(), payload.query());
                 // Notifica os Pattern Providers com o Padrão Coringa na rede
                 WildcardProviderManager.updateSearch(targetGrid, player.getUUID(), payload.query());
             } else if (payload.query() == null || payload.query().isBlank()) {
