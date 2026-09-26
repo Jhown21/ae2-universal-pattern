@@ -19,7 +19,9 @@ public final class ServerJEIHandler {
             }
 
             IGrid targetGrid = null;
+            MEStorageMenu targetMenu = null;
             if (player.containerMenu instanceof MEStorageMenu meStorageMenu) {
+                targetMenu = meStorageMenu;
                 IGridNode hostNode = meStorageMenu.getGridNode();
                 if (hostNode == null && meStorageMenu.getHost() instanceof IActionHost actionHost) {
                     hostNode = actionHost.getActionableNode();
@@ -31,6 +33,9 @@ public final class ServerJEIHandler {
 
             if (targetGrid != null) {
                 WildcardProviderManager.handleJeiRecipeClick(targetGrid, player, payload.itemId(), payload.recipeId());
+                if (targetMenu != null) {
+                    targetMenu.broadcastChanges();
+                }
             }
         });
     }

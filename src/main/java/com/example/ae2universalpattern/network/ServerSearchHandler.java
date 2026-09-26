@@ -23,7 +23,9 @@ public final class ServerSearchHandler {
             }
 
             IGrid targetGrid = null;
+            MEStorageMenu targetMenu = null;
             if (player.containerMenu instanceof MEStorageMenu meStorageMenu) {
+                targetMenu = meStorageMenu;
                 IGridNode hostNode = meStorageMenu.getGridNode();
                 if (hostNode == null && meStorageMenu.getHost() instanceof IActionHost actionHost) {
                     hostNode = actionHost.getActionableNode();
@@ -34,10 +36,19 @@ public final class ServerSearchHandler {
             }
 
             if (targetGrid != null) {
-                LOGGER.info("[AE2UniversalPattern] Player {} search updated: '{}'", player.getGameProfile().getName(), payload.query());
-                // Notifica os Pattern Providers com o Padrão Coringa na rede
-                WildcardProviderManager.updateSearch(targetGrid, player.getUUID(), payload.query());
-            } else if (payload.query() == null || payload.query().isBlank()) {
+                if (payload.terminalClosed()) {
+                    LOGGER.info("[AE2UniversalPattern] Player {} closed terminal screen. Clearing search queries.",
+                            player.getGameProfile().getName());
+                    WildcardProviderManager.clearPlayerSearch(player.getUUID());
+                } else {
+                    LOGGER.info("[AE2UniversalPattern] Player {} search updated: '{}' (client matched {} items)",
+                            player.getGameProfile().getName(), payload.query(), payload.matchedItemIds().size());
+                    WildcardProviderManager.updateSearch(targetGrid, player.getUUID(), payload.query(), payload.matchedItemIds());
+                }
+                if (targetMenu != null) {
+                    targetMenu.broadcastChanges();
+                }
+            } else if (payload.terminalClosed() || payload.query() == null || payload.query().isBlank()) {
                 WildcardProviderManager.clearPlayerSearch(player.getUUID());
             }
         });

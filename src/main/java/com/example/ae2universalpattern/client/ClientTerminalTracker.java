@@ -2,25 +2,32 @@ package com.example.ae2universalpattern.client;
 
 import appeng.client.gui.me.common.MEStorageScreen;
 import appeng.client.gui.me.common.Repo;
+import appeng.menu.me.common.MEStorageMenu;
 import com.example.ae2universalpattern.AE2UniversalPatternMod;
+import com.example.ae2universalpattern.client.jei.JEIInteractionHelper;
 import com.example.ae2universalpattern.network.SearchQueryPayload;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 
-import appeng.menu.me.common.MEStorageMenu;
-import com.example.ae2universalpattern.client.jei.JEIInteractionHelper;
-import net.neoforged.fml.ModList;
-import net.neoforged.neoforge.client.event.ScreenEvent;
-
 import java.lang.reflect.Field;
+import java.text.Normalizer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
 
 @EventBusSubscriber(modid = AE2UniversalPatternMod.MOD_ID, value = Dist.CLIENT)
 public final class ClientTerminalTracker {
@@ -92,7 +99,8 @@ public final class ClientTerminalTracker {
                 if (lastSentQuery == null || pendingQuery.isEmpty() || (System.currentTimeMillis() - lastChangeTime >= 200)) {
                     lastSentQuery = pendingQuery;
                     LOGGER.info("[AE2UniversalPattern] Sending search query to server: '{}'", pendingQuery);
-                    PacketDistributor.sendToServer(new SearchQueryPayload(pendingQuery));
+                    List<String> matchedItemIds = findMatchingItemIds(pendingQuery);
+                    PacketDistributor.sendToServer(new SearchQueryPayload(pendingQuery, matchedItemIds, false));
                 }
             }
         } else if (wasInAETerminal) {
@@ -100,8 +108,41 @@ public final class ClientTerminalTracker {
             lastSentQuery = null;
             pendingQuery = "";
             LOGGER.info("[AE2UniversalPattern] Left ME Terminal screen. Clearing server search query.");
-            PacketDistributor.sendToServer(new SearchQueryPayload(""));
+            PacketDistributor.sendToServer(new SearchQueryPayload("", Collections.emptyList(), true));
         }
+    }
+
+    public static List<String> findMatchingItemIds(String query) {
+        if (query == null || query.isBlank()) {
+            return Collections.emptyList();
+        }
+        String cleanQuery = clean(query);
+        if (cleanQuery.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<String> matched = new ArrayList<>();
+        for (var entry : BuiltInRegistries.ITEM.entrySet()) {
+            Item item = entry.getValue();
+            ResourceLocation id = entry.getKey().location();
+            String path = clean(id.getPath());
+            String fullId = id.toString().toLowerCase(Locale.ROOT);
+            String localizedName = clean(item.getDescription().getString());
+
+            if (localizedName.contains(cleanQuery) || path.contains(cleanQuery) || fullId.contains(cleanQuery)) {
+                matched.add(id.toString());
+                if (matched.size() >= 250) {
+                    break;
+                }
+            }
+        }
+        return matched;
+    }
+
+    private static String clean(String input) {
+        if (input == null) return "";
+        return Normalizer.normalize(input.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
     }
 
     private static String extractSearchText(MEStorageScreen<?> screen) {

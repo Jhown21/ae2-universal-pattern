@@ -12,6 +12,7 @@
     "extendedae.MixinTileAssemblerMatrixPatternFilter"
   ],
   "client": [
+    "MixinNameSearchPredicate",
     "extendedae.MixinGuiAssemblerMatrix"
   ],
   "injectors": {

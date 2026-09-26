@@ -32,8 +32,10 @@ public final class WildcardProviderManager {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
+    public record PlayerSearchQuery(String query, Set<String> matchedItemIds) {}
+
     private static final Set<IWildcardPatternHolder> ACTIVE_HOLDERS = Collections.newSetFromMap(new WeakHashMap<>());
-    private static final Map<IGrid, Map<UUID, String>> GRID_PLAYER_QUERIES = new WeakHashMap<>();
+    private static final Map<IGrid, Map<UUID, PlayerSearchQuery>> GRID_PLAYER_QUERIES = new WeakHashMap<>();
     private static final Map<IGrid, Set<IPatternDetails>> GRID_PERMANENT_PATTERNS = new WeakHashMap<>();
     private static final Map<IGrid, List<IPatternDetails>> GRID_JEI_PATTERNS = new WeakHashMap<>();
     private static final Map<IGrid, List<IPatternDetails>> GRID_PATTERNS = new WeakHashMap<>();
@@ -94,22 +96,28 @@ public final class WildcardProviderManager {
     }
 
     public static synchronized void updateSearch(IGrid targetGrid, UUID playerId, String query) {
+        updateSearch(targetGrid, playerId, query, Collections.emptyList());
+    }
+
+    public static synchronized void updateSearch(IGrid targetGrid, UUID playerId, String query, Collection<String> matchedItemIds) {
         if (targetGrid == null || playerId == null) return;
 
-        Map<UUID, String> playerQueries = GRID_PLAYER_QUERIES.computeIfAbsent(targetGrid, g -> new HashMap<>());
+        Map<UUID, PlayerSearchQuery> playerQueries = GRID_PLAYER_QUERIES.computeIfAbsent(targetGrid, g -> new HashMap<>());
         if (query == null || query.isBlank()) {
-            playerQueries.remove(playerId);
+            // Se a query está em branco mas o terminal continua aberto, NÃO limpa abruptamente as receitas
+            // que foram pesquisadas recentemente pelo jogador se ele apenas limpou a barra para olhar o inventário/subcomponentes!
+            // Elas só são descarregadas quando o jogador de fato fecha o terminal (terminalClosed=true).
         } else {
-            playerQueries.put(playerId, query.trim());
+            Set<String> idSet = matchedItemIds != null && !matchedItemIds.isEmpty() ? new HashSet<>(matchedItemIds) : Collections.emptySet();
+            playerQueries.put(playerId, new PlayerSearchQuery(query.trim(), idSet));
+            refreshGridPatterns(targetGrid);
         }
-
-        refreshGridPatterns(targetGrid);
     }
 
     public static synchronized void clearPlayerSearch(UUID playerId) {
         if (playerId == null) return;
         List<IGrid> gridsToRefresh = new ArrayList<>();
-        for (Map.Entry<IGrid, Map<UUID, String>> entry : GRID_PLAYER_QUERIES.entrySet()) {
+        for (Map.Entry<IGrid, Map<UUID, PlayerSearchQuery>> entry : GRID_PLAYER_QUERIES.entrySet()) {
             if (entry.getValue().remove(playerId) != null) {
                 gridsToRefresh.add(entry.getKey());
             }
@@ -290,15 +298,18 @@ public final class WildcardProviderManager {
         List<IWildcardPatternHolder> holders = getHoldersForGrid(grid);
         if (holders.isEmpty()) return;
 
-        Map<UUID, String> playerQueries = GRID_PLAYER_QUERIES.get(grid);
+        Map<UUID, PlayerSearchQuery> playerQueries = GRID_PLAYER_QUERIES.get(grid);
         Set<String> activeQueries = new HashSet<>();
+        Set<String> allMatchedItemIds = new HashSet<>();
         if (playerQueries != null) {
-            for (String q : playerQueries.values()) {
-                if (q != null && !q.isBlank()) {
-                    activeQueries.add(q);
+            for (PlayerSearchQuery psq : playerQueries.values()) {
+                if (psq != null && psq.query() != null && !psq.query().isBlank()) {
+                    activeQueries.add(psq.query());
+                    allMatchedItemIds.addAll(psq.matchedItemIds());
                 }
             }
         }
+        boolean hasActiveSearch = !activeQueries.isEmpty() || !allMatchedItemIds.isEmpty();
 
         boolean isGridBusy = false;
         ICraftingService craftingService = grid.getCraftingService();
@@ -336,11 +347,12 @@ public final class WildcardProviderManager {
         Set<AEItemKey> seenKeys = new HashSet<>();
         List<IPatternDetails> combinedPatterns = new ArrayList<>();
 
-        if (!activeQueries.isEmpty()) {
+        if (hasActiveSearch) {
             // 1. Receitas da busca ativa no terminal ME vêm PRIMEIRO quando há termo digitado
             List<IPatternDetails> searchPatterns = RecipePatternIndexer.searchCraftingRecipes(
                     level,
                     activeQueries,
+                    allMatchedItemIds,
                     systemInventory
             );
             for (IPatternDetails sp : searchPatterns) {

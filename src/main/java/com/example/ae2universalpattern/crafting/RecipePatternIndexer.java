@@ -68,12 +68,20 @@ public final class RecipePatternIndexer {
     }
 
     public static List<IPatternDetails> searchCraftingRecipes(Level level, Collection<String> queries) {
-        return searchCraftingRecipes(level, queries, Collections.emptyMap());
+        return searchCraftingRecipes(level, queries, Collections.emptySet(), Collections.emptyMap());
     }
 
     public static List<IPatternDetails> searchCraftingRecipes(
             Level level,
             Collection<String> queries,
+            Map<Item, Long> systemInventory) {
+        return searchCraftingRecipes(level, queries, Collections.emptySet(), systemInventory);
+    }
+
+    public static List<IPatternDetails> searchCraftingRecipes(
+            Level level,
+            Collection<String> queries,
+            Set<String> clientMatchedItemIds,
             Map<Item, Long> systemInventory) {
 
         if (level == null) {
@@ -88,7 +96,7 @@ public final class RecipePatternIndexer {
                 }
             }
         }
-        boolean hasSearchQuery = !validQueries.isEmpty();
+        boolean hasSearchQuery = !validQueries.isEmpty() || (clientMatchedItemIds != null && !clientMatchedItemIds.isEmpty());
 
         Map<Item, Long> inv = systemInventory != null ? systemInventory : Collections.emptyMap();
         Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOut = getRecipesByOutput(level);
@@ -113,8 +121,8 @@ public final class RecipePatternIndexer {
             if (previewOut.isEmpty()) continue;
 
             if (hasSearchQuery) {
-                if (matchesAnyQuery(previewOut, validQueries)) {
-                    long relScore = computeQueryRelevanceScore(previewOut, validQueries);
+                if (matchesAnyQuery(previewOut, validQueries, clientMatchedItemIds)) {
+                    long relScore = computeQueryRelevanceScore(previewOut, validQueries, clientMatchedItemIds);
                     long availScore = computeRecipeAvailabilityScore(recipe, inv, recipesByOut, scoreCache);
                     scoredCandidates.add(new ScoredRecipe(holder, relScore, availScore, relScore + availScore));
                 }
@@ -888,8 +896,8 @@ public final class RecipePatternIndexer {
                 .replaceAll("\\p{M}", "");
     }
 
-    private static long computeQueryRelevanceScore(ItemStack stack, List<String> queries) {
-        if (stack.isEmpty() || queries == null || queries.isEmpty()) {
+    private static long computeQueryRelevanceScore(ItemStack stack, List<String> queries, Set<String> clientMatchedItemIds) {
+        if (stack.isEmpty()) {
             return 0L;
         }
 
@@ -901,82 +909,94 @@ public final class RecipePatternIndexer {
 
         long maxScore = 0L;
 
-        for (String rawQuery : queries) {
-            if (rawQuery == null || rawQuery.isBlank()) continue;
-            String q = cleanString(rawQuery);
+        if (clientMatchedItemIds != null && clientMatchedItemIds.contains(id.toString())) {
+            maxScore = 1_500_000_000L;
+        }
 
-            long score;
-            if (cleanDisplayName.equals(q) || path.equals(q) || fullId.equals(q)) {
-                score = 2_000_000_000L;
-            } else if (cleanDisplayName.startsWith(q) || path.startsWith(q)) {
-                score = 1_000_000_000L;
-            } else if (cleanDisplayName.contains(" " + q) || path.contains("_" + q)) {
-                score = 500_000_000L;
-            } else if (cleanDisplayName.contains(q) || path.contains(q)) {
-                score = 200_000_000L;
-            } else {
-                score = 50_000_000L;
-            }
+        if (queries != null) {
+            for (String rawQuery : queries) {
+                if (rawQuery == null || rawQuery.isBlank()) continue;
+                String q = cleanString(rawQuery);
 
-            if (score > maxScore) {
-                maxScore = score;
+                long score;
+                if (cleanDisplayName.equals(q) || path.equals(q) || fullId.equals(q)) {
+                    score = 2_000_000_000L;
+                } else if (cleanDisplayName.startsWith(q) || path.startsWith(q)) {
+                    score = 1_000_000_000L;
+                } else if (cleanDisplayName.contains(" " + q) || path.contains("_" + q)) {
+                    score = 500_000_000L;
+                } else if (cleanDisplayName.contains(q) || path.contains(q)) {
+                    score = 200_000_000L;
+                } else {
+                    score = 50_000_000L;
+                }
+
+                if (score > maxScore) {
+                    maxScore = score;
+                }
             }
         }
 
         return maxScore;
     }
 
-    private static boolean matchesAnyQuery(ItemStack stack, List<String> queries) {
+    private static boolean matchesAnyQuery(ItemStack stack, List<String> queries, Set<String> clientMatchedItemIds) {
         if (stack.isEmpty()) {
             return false;
         }
 
         Item item = stack.getItem();
         ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
+        if (clientMatchedItemIds != null && clientMatchedItemIds.contains(id.toString())) {
+            return true;
+        }
+
         String modId = id.getNamespace().toLowerCase(Locale.ROOT);
         String path = id.getPath().toLowerCase(Locale.ROOT);
         String fullId = id.toString().toLowerCase(Locale.ROOT);
         String cleanDisplayName = cleanString(stack.getHoverName().getString());
 
-        for (String q : queries) {
-            if (q == null || q.isBlank()) continue;
-            String[] tokens = q.trim().split("\\s+");
-            boolean allTokensMatch = true;
+        if (queries != null) {
+            for (String q : queries) {
+                if (q == null || q.isBlank()) continue;
+                String[] tokens = q.trim().split("\\s+");
+                boolean allTokensMatch = true;
 
-            for (String rawToken : tokens) {
-                if (rawToken.isEmpty()) continue;
-                String token = cleanString(rawToken);
+                for (String rawToken : tokens) {
+                    if (rawToken.isEmpty()) continue;
+                    String token = cleanString(rawToken);
 
-                if (token.startsWith("@")) {
-                    String mod = token.substring(1);
-                    if (mod.isEmpty() || !modId.contains(mod)) {
-                        allTokensMatch = false;
-                        break;
-                    }
-                } else if (token.startsWith("#")) {
-                    String tagQuery = token.substring(1);
-                    if (!tagQuery.isEmpty()) {
-                        boolean tagMatches = stack.getTags().anyMatch(tagKey -> {
-                            String tagPath = tagKey.location().getPath().toLowerCase(Locale.ROOT);
-                            String tagFull = tagKey.location().toString().toLowerCase(Locale.ROOT);
-                            return tagPath.contains(tagQuery) || tagFull.contains(tagQuery);
-                        });
-                        if (!tagMatches) {
+                    if (token.startsWith("@")) {
+                        String mod = token.substring(1);
+                        if (mod.isEmpty() || !modId.contains(mod)) {
+                            allTokensMatch = false;
+                            break;
+                        }
+                    } else if (token.startsWith("#")) {
+                        String tagQuery = token.substring(1);
+                        if (!tagQuery.isEmpty()) {
+                            boolean tagMatches = stack.getTags().anyMatch(tagKey -> {
+                                String tagPath = tagKey.location().getPath().toLowerCase(Locale.ROOT);
+                                String tagFull = tagKey.location().toString().toLowerCase(Locale.ROOT);
+                                return tagPath.contains(tagQuery) || tagFull.contains(tagQuery);
+                            });
+                            if (!tagMatches) {
+                                allTokensMatch = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        boolean tokenMatches = cleanDisplayName.contains(token) || path.contains(token) || fullId.contains(token);
+                        if (!tokenMatches) {
                             allTokensMatch = false;
                             break;
                         }
                     }
-                } else {
-                    boolean tokenMatches = cleanDisplayName.contains(token) || path.contains(token) || fullId.contains(token);
-                    if (!tokenMatches) {
-                        allTokensMatch = false;
-                        break;
-                    }
                 }
-            }
 
-            if (allTokensMatch) {
-                return true;
+                if (allTokensMatch) {
+                    return true;
+                }
             }
         }
         return false;
