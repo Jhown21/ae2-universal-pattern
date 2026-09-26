@@ -38,15 +38,14 @@ public class MixinNameSearchPredicate {
         }
 
         // 2. Registry path & full ID check (e.g. quantum -> advanced_ae:quantum_accelerator)
-        if (entryInfo instanceof AEItemKey itemKey) {
-            ResourceLocation id = BuiltInRegistries.ITEM.getKey(itemKey.getItem());
-            if (id != null) {
-                String path = ae2universalpattern$clean(id.getPath());
-                String fullId = id.toString().toLowerCase(Locale.ROOT);
-                if (path.contains(cleanTerm) || fullId.contains(cleanTerm)) {
-                    cir.setReturnValue(true);
-                    return;
-                }
+        ResourceLocation id = entryInfo.getId();
+        if (id != null) {
+            String path = ae2universalpattern$clean(id.getPath());
+            String pathWithSpaces = path.replace('_', ' ');
+            String fullId = id.toString().toLowerCase(Locale.ROOT);
+            if (path.contains(cleanTerm) || pathWithSpaces.contains(cleanTerm) || fullId.contains(cleanTerm)) {
+                cir.setReturnValue(true);
+                return;
             }
         }
     }

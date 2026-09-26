@@ -46,6 +46,8 @@ public final class ServerSearchHandler {
                     WildcardProviderManager.updateSearch(targetGrid, player.getUUID(), payload.query(), payload.matchedItemIds());
                 }
                 if (targetMenu != null) {
+                    int craftableCount = targetGrid.getCraftingService().getCraftables(targetMenu::isKeyVisible).size();
+                    LOGGER.info("[AE2UniversalPattern ServerSearchHandler] Triggering broadcastChanges. Grid craftables count: {}", craftableCount);
                     targetMenu.broadcastChanges();
                 }
             } else if (payload.terminalClosed() || payload.query() == null || payload.query().isBlank()) {
