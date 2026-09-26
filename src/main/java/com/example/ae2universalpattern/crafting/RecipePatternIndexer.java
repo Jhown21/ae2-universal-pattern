@@ -213,27 +213,53 @@ public final class RecipePatternIndexer {
             }
         }
 
-        // 3. Codifica os patterns das receitas primárias e TODA a árvore de sub-receitas via BFS iterativo
+        // 3. Codifica os patterns em 2 Fases:
+        // FASE 1: Codifica TODAS as receitas primárias candidatas diretamente no resultado.
+        // Isso garante que TODOS os itens correspondentes à busca do jogador (ex: 256m, quantum, bau)
+        // apareçam no topo imediato do ME Terminal como craftáveis, sem serem empurrados ou sufocados por sub-crafts.
         List<IPatternDetails> result = new ArrayList<>();
         Set<AEItemKey> seenPatternKeys = new HashSet<>();
         Set<RecipeHolder<CraftingRecipe>> encodedRecipes = new HashSet<>();
+
+        Queue<QueuedItem> bfsQueue = new ArrayDeque<>();
+        Set<Item> queuedItems = new HashSet<>();
 
         for (RecipeHolder<CraftingRecipe> holder : primaryToEncode) {
             if (result.size() >= MAX_TOTAL_PATTERNS) {
                 break;
             }
 
-            processPrimaryRecipe(
-                    holder,
-                    level,
-                    inv,
-                    recipesByOut,
-                    scoreCache,
-                    result,
-                    seenPatternKeys,
-                    encodedRecipes
-            );
+            List<ItemStack[]> variantInputs = prepareRecipeInputs(holder, inv, recipesByOut, scoreCache);
+            for (ItemStack[] in : variantInputs) {
+                if (result.size() >= MAX_TOTAL_PATTERNS) {
+                    break;
+                }
+                boolean success = encodeSinglePattern(holder, in, level, result, seenPatternKeys);
+                if (success) {
+                    encodedRecipes.add(holder);
+                    for (ItemStack stack : in) {
+                        if (!stack.isEmpty() && queuedItems.add(stack.getItem())) {
+                            bfsQueue.add(new QueuedItem(stack.getItem(), 1));
+                        }
+                    }
+                }
+            }
         }
+
+        // FASE 2: Expansão BFS iterativa dos ingredientes intermediários (sub-crafts)
+        // Usa a capacidade restante de patterns (até MAX_TOTAL_PATTERNS) para indexar
+        // todos os componentes necessários para a fabricação dos itens primários.
+        expandBfsSubCrafts(
+                bfsQueue,
+                queuedItems,
+                level,
+                inv,
+                recipesByOut,
+                scoreCache,
+                result,
+                seenPatternKeys,
+                encodedRecipes
+        );
 
         return List.copyOf(result);
     }
@@ -282,9 +308,25 @@ public final class RecipePatternIndexer {
         List<IPatternDetails> result = new ArrayList<>();
         Set<AEItemKey> seenPatternKeys = new HashSet<>();
         Set<RecipeHolder<CraftingRecipe>> encodedRecipes = new HashSet<>();
+        Queue<QueuedItem> bfsQueue = new ArrayDeque<>();
+        Set<Item> queuedItems = new HashSet<>();
 
-        processPrimaryRecipe(
-                selectedHolder,
+        List<ItemStack[]> variantInputs = prepareRecipeInputs(selectedHolder, inv, recipesByOut, scoreCache);
+        for (ItemStack[] in : variantInputs) {
+            boolean success = encodeSinglePattern(selectedHolder, in, level, result, seenPatternKeys);
+            if (success) {
+                encodedRecipes.add(selectedHolder);
+                for (ItemStack stack : in) {
+                    if (!stack.isEmpty() && queuedItems.add(stack.getItem())) {
+                        bfsQueue.add(new QueuedItem(stack.getItem(), 1));
+                    }
+                }
+            }
+        }
+
+        expandBfsSubCrafts(
+                bfsQueue,
+                queuedItems,
                 level,
                 inv,
                 recipesByOut,
@@ -334,9 +376,25 @@ public final class RecipePatternIndexer {
         List<IPatternDetails> result = new ArrayList<>();
         Set<AEItemKey> seenPatternKeys = new HashSet<>();
         Set<RecipeHolder<CraftingRecipe>> encodedRecipes = new HashSet<>();
+        Queue<QueuedItem> bfsQueue = new ArrayDeque<>();
+        Set<Item> queuedItems = new HashSet<>();
 
-        processPrimaryRecipe(
-                bestFallback,
+        List<ItemStack[]> variantInputs = prepareRecipeInputs(bestFallback, inv, recipesByOut, scoreCache);
+        for (ItemStack[] in : variantInputs) {
+            boolean success = encodeSinglePattern(bestFallback, in, level, result, seenPatternKeys);
+            if (success) {
+                encodedRecipes.add(bestFallback);
+                for (ItemStack stack : in) {
+                    if (!stack.isEmpty() && queuedItems.add(stack.getItem())) {
+                        bfsQueue.add(new QueuedItem(stack.getItem(), 1));
+                    }
+                }
+            }
+        }
+
+        expandBfsSubCrafts(
+                bfsQueue,
+                queuedItems,
                 level,
                 inv,
                 recipesByOut,
@@ -379,22 +437,18 @@ public final class RecipePatternIndexer {
         return true;
     }
 
-    private static void processPrimaryRecipe(
+    private static List<ItemStack[]> prepareRecipeInputs(
             RecipeHolder<CraftingRecipe> holder,
-            Level level,
             Map<Item, Long> systemInventory,
             Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOutput,
-            Map<Item, Long> scoreCache,
-            List<IPatternDetails> result,
-            Set<AEItemKey> seenPatternKeys,
-            Set<RecipeHolder<CraftingRecipe>> encodedRecipes) {
+            Map<Item, Long> scoreCache) {
 
         CraftingRecipe recipe = holder.value();
         NonNullList<Ingredient> matrix;
         try {
             matrix = CraftingRecipeUtil.ensure3by3CraftingMatrix(recipe);
         } catch (Exception e) {
-            return;
+            return Collections.emptyList();
         }
 
         Ingredient primaryMulti = null;
@@ -423,8 +477,6 @@ public final class RecipePatternIndexer {
 
             long topScore = scoredVariants.isEmpty() ? 0L : scoredVariants.get(0).score;
 
-            // Se existem variantes realizáveis pelo estoque (>= 100_000L), usa APENAS elas!
-            // Evita registrar padrões que pedem materiais que o jogador não consegue fazer.
             if (topScore >= 100_000L) {
                 for (VariantCandidate vc : scoredVariants) {
                     if (vc.score >= 100_000L) {
@@ -446,11 +498,8 @@ public final class RecipePatternIndexer {
             candidateVariants.add(ItemStack.EMPTY);
         }
 
+        List<ItemStack[]> resultList = new ArrayList<>();
         for (ItemStack variantItem : candidateVariants) {
-            if (result.size() >= MAX_TOTAL_PATTERNS) {
-                break;
-            }
-
             ItemStack[] in = new ItemStack[9];
             Arrays.fill(in, ItemStack.EMPTY);
 
@@ -464,29 +513,19 @@ public final class RecipePatternIndexer {
                     in[i] = getBestItemForIngredient(ing, systemInventory, recipesByOutput, scoreCache).copy();
                 }
             }
-
-            // Executa a resolução BFS iterativa da árvore inteira a partir desta variante
-            buildCompleteTreeBfs(
-                    holder,
-                    in,
-                    level,
-                    systemInventory,
-                    recipesByOutput,
-                    scoreCache,
-                    result,
-                    seenPatternKeys,
-                    encodedRecipes
-            );
+            resultList.add(in);
         }
+
+        return resultList;
     }
 
     /**
-     * Resolução iterativa BFS da árvore completa de crafting.
+     * Resolução iterativa BFS dos sub-crafts da árvore completa de crafting.
      * Não utiliza recursão, garantindo 0 lag e execução instantânea mesmo em modpacks gigantes.
      */
-    private static void buildCompleteTreeBfs(
-            RecipeHolder<CraftingRecipe> primaryHolder,
-            ItemStack[] primaryInputs,
+    private static void expandBfsSubCrafts(
+            Queue<QueuedItem> queue,
+            Set<Item> queuedItems,
             Level level,
             Map<Item, Long> systemInventory,
             Map<Item, List<RecipeHolder<CraftingRecipe>>> recipesByOutput,
@@ -494,24 +533,6 @@ public final class RecipePatternIndexer {
             List<IPatternDetails> result,
             Set<AEItemKey> seenPatternKeys,
             Set<RecipeHolder<CraftingRecipe>> encodedRecipes) {
-
-        // 1. Codifica a receita principal (se for uma variante diferente, seenPatternKeys cuidará da deduplicação)
-        encodedRecipes.add(primaryHolder);
-        encodeSinglePattern(primaryHolder, primaryInputs, level, result, seenPatternKeys);
-
-        // 2. Fila BFS para descer em todos os ingredientes de sub-craft de forma iterativa
-        // Garante que mesmo itens que já possuem estoque parcial no ME sejam codificados,
-        // permitindo que o AE2 fabrique mais unidades quando a quantidade solicitada for maior que o estoque!
-        Queue<QueuedItem> queue = new ArrayDeque<>();
-        Set<Item> queuedItems = new HashSet<>();
-
-        for (ItemStack in : primaryInputs) {
-            if (!in.isEmpty()) {
-                if (queuedItems.add(in.getItem())) {
-                    queue.add(new QueuedItem(in.getItem(), 1));
-                }
-            }
-        }
 
         while (!queue.isEmpty() && result.size() < MAX_TOTAL_PATTERNS) {
             QueuedItem qi = queue.poll();
@@ -903,38 +924,48 @@ public final class RecipePatternIndexer {
 
         Item item = stack.getItem();
         ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
+        String modId = id.getNamespace().toLowerCase(Locale.ROOT);
         String path = id.getPath().toLowerCase(Locale.ROOT);
         String fullId = id.toString().toLowerCase(Locale.ROOT);
         String cleanDisplayName = cleanString(stack.getHoverName().getString());
 
         long maxScore = 0L;
 
-        if (clientMatchedItemIds != null && clientMatchedItemIds.contains(id.toString())) {
-            maxScore = 1_500_000_000L;
-        }
-
-        if (queries != null) {
+        if (queries != null && !queries.isEmpty()) {
             for (String rawQuery : queries) {
                 if (rawQuery == null || rawQuery.isBlank()) continue;
                 String q = cleanString(rawQuery);
 
                 long score;
                 if (cleanDisplayName.equals(q) || path.equals(q) || fullId.equals(q)) {
-                    score = 2_000_000_000L;
+                    score = 2_500_000_000L;
                 } else if (cleanDisplayName.startsWith(q) || path.startsWith(q)) {
+                    score = 2_000_000_000L;
+                } else if (cleanDisplayName.contains(" " + q) || path.contains("_" + q) || path.endsWith(q)) {
+                    score = 1_500_000_000L;
+                } else if (cleanDisplayName.contains(q) || path.contains(q) || fullId.contains(q)) {
                     score = 1_000_000_000L;
-                } else if (cleanDisplayName.contains(" " + q) || path.contains("_" + q)) {
-                    score = 500_000_000L;
-                } else if (cleanDisplayName.contains(q) || path.contains(q)) {
-                    score = 200_000_000L;
                 } else {
-                    score = 50_000_000L;
+                    score = 500_000_000L;
                 }
 
                 if (score > maxScore) {
                     maxScore = score;
                 }
             }
+        }
+
+        if (clientMatchedItemIds != null && clientMatchedItemIds.contains(id.toString())) {
+            maxScore += 500_000_000L;
+        }
+
+        if ("minecraft".equals(modId)) {
+            maxScore += 200_000_000L;
+        } else if ("ae2".equals(modId)) {
+            maxScore += 150_000_000L;
+        } else if ("megacells".equals(modId) || "advanced_ae".equals(modId) || "appflux".equals(modId)
+                || "appliedbotanics".equals(modId) || "appmek".equals(modId) || "extendedae".equals(modId)) {
+            maxScore += 100_000_000L;
         }
 
         return maxScore;

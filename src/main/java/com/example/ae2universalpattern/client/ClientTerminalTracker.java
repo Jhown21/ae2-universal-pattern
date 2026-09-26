@@ -36,7 +36,6 @@ public final class ClientTerminalTracker {
     private static String lastSentQuery = null;
     private static String pendingQuery = "";
     private static long lastChangeTime = 0;
-    private static boolean wasInAETerminal = false;
 
     private static Field REPO_FIELD;
     private static Field SEARCH_FIELD;
@@ -82,10 +81,6 @@ public final class ClientTerminalTracker {
         Screen screen = mc.screen;
 
         if (screen instanceof MEStorageScreen<?> storageScreen) {
-            if (!wasInAETerminal) {
-                wasInAETerminal = true;
-                lastSentQuery = null;
-            }
             String currentSearch = extractSearchText(storageScreen);
 
             if (!currentSearch.equals(pendingQuery)) {
@@ -93,22 +88,16 @@ public final class ClientTerminalTracker {
                 lastChangeTime = System.currentTimeMillis();
             }
 
-            // Se mudou ou acabou de abrir (lastSentQuery == null)
+            // Se mudou ou primeira vez no terminal
             if (lastSentQuery == null || !pendingQuery.equals(lastSentQuery)) {
-                // Se foi limpo ou acabou de abrir, envia de imediato; se digitando, debounce de 200ms
-                if (lastSentQuery == null || pendingQuery.isEmpty() || (System.currentTimeMillis() - lastChangeTime >= 200)) {
+                // Se foi limpo, envia de imediato; se digitando, debounce de 200ms
+                if (pendingQuery.isEmpty() || (System.currentTimeMillis() - lastChangeTime >= 200)) {
                     lastSentQuery = pendingQuery;
                     LOGGER.info("[AE2UniversalPattern] Sending search query to server: '{}'", pendingQuery);
                     List<String> matchedItemIds = findMatchingItemIds(pendingQuery);
                     PacketDistributor.sendToServer(new SearchQueryPayload(pendingQuery, matchedItemIds, false));
                 }
             }
-        } else if (wasInAETerminal) {
-            wasInAETerminal = false;
-            lastSentQuery = null;
-            pendingQuery = "";
-            LOGGER.info("[AE2UniversalPattern] Left ME Terminal screen. Clearing server search query.");
-            PacketDistributor.sendToServer(new SearchQueryPayload("", Collections.emptyList(), true));
         }
     }
 

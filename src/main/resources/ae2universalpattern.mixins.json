@@ -2,7 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.example.ae2universalpattern.mixin",
-  "compatibilityLevel": "JAVA_17",
+  "compatibilityLevel": "JAVA_21",
   "plugin": "com.example.ae2universalpattern.mixin.AE2UniversalPatternMixinPlugin",
   "refmap": "ae2universalpattern.refmap.json",
   "mixins": [
@@ -13,6 +13,7 @@
   ],
   "client": [
     "MixinNameSearchPredicate",
+    "MixinRepoSearch",
     "extendedae.MixinGuiAssemblerMatrix"
   ],
   "injectors": {

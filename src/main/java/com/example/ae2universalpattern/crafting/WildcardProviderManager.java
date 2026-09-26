@@ -104,9 +104,9 @@ public final class WildcardProviderManager {
 
         Map<UUID, PlayerSearchQuery> playerQueries = GRID_PLAYER_QUERIES.computeIfAbsent(targetGrid, g -> new HashMap<>());
         if (query == null || query.isBlank()) {
-            // Se a query está em branco mas o terminal continua aberto, NÃO limpa abruptamente as receitas
-            // que foram pesquisadas recentemente pelo jogador se ele apenas limpou a barra para olhar o inventário/subcomponentes!
-            // Elas só são descarregadas quando o jogador de fato fecha o terminal (terminalClosed=true).
+            if (playerQueries.remove(playerId) != null) {
+                refreshGridPatterns(targetGrid);
+            }
         } else {
             Set<String> idSet = matchedItemIds != null && !matchedItemIds.isEmpty() ? new HashSet<>(matchedItemIds) : Collections.emptySet();
             playerQueries.put(playerId, new PlayerSearchQuery(query.trim(), idSet));

@@ -36,10 +36,10 @@ public final class ServerSearchHandler {
             }
 
             if (targetGrid != null) {
-                if (payload.terminalClosed()) {
-                    LOGGER.info("[AE2UniversalPattern] Player {} closed terminal screen. Clearing search queries.",
+                if (payload.terminalClosed() || payload.query() == null || payload.query().isBlank()) {
+                    LOGGER.info("[AE2UniversalPattern] Player {} cleared search query.",
                             player.getGameProfile().getName());
-                    WildcardProviderManager.clearPlayerSearch(player.getUUID());
+                    WildcardProviderManager.updateSearch(targetGrid, player.getUUID(), "", null);
                 } else {
                     LOGGER.info("[AE2UniversalPattern] Player {} search updated: '{}' (client matched {} items)",
                             player.getGameProfile().getName(), payload.query(), payload.matchedItemIds().size());
